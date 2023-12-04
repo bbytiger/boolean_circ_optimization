@@ -1,7 +1,18 @@
+from abc import ABC, abstractmethod
 import circuitgraph as cg
 
 
-class RewriteRule:
+class RewriteRule(ABC):
+    @abstractmethod
+    def find_rewrite_targets(self, c: cg.Circuit):
+        pass
+
+
+class AndAssociative(RewriteRule):
+    pass
+
+
+class AndMoveUp(RewriteRule):
     pass
 
 
@@ -55,8 +66,39 @@ class SynthesisCircuit(cg.Circuit):
         """
         maxd = self.depth_max()
         return list(
-            filter(lambda v: self.depth_l(v) + self.depth_r(v) == maxd, self.c.nodes())
+            filter(
+                lambda v: self.depth_l(v) + self.depth_r(v) == maxd,
+                self.c.nodes(),
+            )
         )
+
+    # TODO: go back and re-optimize this critical path search
+    def critical_paths(self):
+        critical_node_set = set(self.critical_nodes())
+        and_critical_nodes = list(
+            filter(
+                lambda v: self.isAnd(v),
+                critical_node_set,
+            )
+        )
+
+        def special_dfs(path, paths):
+            datum = path[-1]
+            if len(path) != 1 and datum in and_critical_nodes:
+                paths += [path]
+            else:
+                assert datum in critical_node_set
+                for val in self.succ(datum):
+                    if val in critical_node_set:
+                        new_path = path + [val]
+                        paths += special_dfs(new_path, paths)
+            return paths
+
+        paths = []
+        for and_node in and_critical_nodes:
+            node_paths = special_dfs([and_node], [])
+            paths += node_paths
+        return paths
 
     def or_rewrite(self, nd):
         """a OR b = (a XOR b) XOR (a AND b)"""
@@ -102,29 +144,11 @@ class SynthesisCircuit(cg.Circuit):
                 fanout=successors,
                 output=is_output,
             )
-            """ if len(successors) == 0:
-                self.c.set_output(node_r)
-            if nd == "\\alu_op_ext[0]":
-                print("\\alu_op_ext[0] predecessors", predecessors)
-                print("\\alu_op_ext[0] successors", successors)
-                print(
-                    "newly generated nodes",
-                    [node_a, node_l, node_r],
-                )
-                self.print_node_info(node_a)
-                self.print_node_info(node_l)
-                self.print_node_info(node_r)
-            if nd == "\\alu_op_ext[1]":
-                print("\\alu_op_ext[1] predecessors", predecessors)
-                print("\\alu_op_ext[1] successors", successors)
-                print(
-                    "newly generated nodes",
-                    [node_a, node_l, node_r],
-                )
-                self.print_node_info(node_a)
-                self.print_node_info(node_l)
-                self.print_node_info(node_r)
-            self.c.remove(nd) """
+
+    def do_and_xor_transform(self):
+        for nd in list(self.c.nodes()):
+            self.or_rewrite(nd)
+            self.not_rewrite(nd)
 
     def print_node_info(self, nd):
         if nd not in self.c.nodes():
@@ -135,77 +159,66 @@ class SynthesisCircuit(cg.Circuit):
         print(f"{nd} pred", self.pred(nd))
 
 
-c = cg.from_file("ctrl.v")
-sc = SynthesisCircuit(c)
+if __name__ == "__main__":
+    c = cg.from_file("switch_behav.v")
+    sc = SynthesisCircuit(c)
 
-edges = c.edges()
-print(len(edges))
+    edges = c.edges()
+    print(len(edges))
 
-first_edge = list(edges)[0]
-print(first_edge)
+    first_edge = list(edges)[0]
+    print(first_edge)
 
-nodes = c.nodes()
-print(type(nodes))
-print(len(nodes))
+    nodes = c.nodes()
+    print(type(nodes))
+    print(len(nodes))
 
-print(first_edge[0] in nodes)
-print(first_edge[1] in nodes)
+    print(first_edge[0] in nodes)
+    print(first_edge[1] in nodes)
 
-andGates = c.filter_type("and")
-print(andGates)
+    andGates = c.filter_type("and")
+    print(andGates)
 
-and0 = list(andGates)[0]
-print(and0)
-print(sc.isAnd(and0))
+    and0 = list(andGates)[0]
+    print(and0)
+    print(sc.isAnd(and0))
 
+    print(c.filter_type("xor"))
+    print(set(c.type(nodes)))
 
-print(c.filter_type("xor"))
-print(set(c.type(nodes)))
+    inputGates = c.filter_type("input")
+    # print(inputGates)
 
-inputGates = c.filter_type("input")
-# print(inputGates)
+    # bufGates = c.filter_type("buf")
+    # print(bufGates, "bufGates")
+    # g1 = list(bufGates)[0]
+    # print("predecessors buf g1", sc.pred(g1))
+    # print("successors bug g1", sc.succ(g1))
 
-# bufGates = c.filter_type("buf")
-# print(bufGates, "bufGates")
-# g1 = list(bufGates)[0]
-# print("predecessors buf g1", sc.pred(g1))
-# print("successors bug g1", sc.succ(g1))
+    input0 = list(inputGates)[0]
+    print(input0)
+    print("predecessors", sc.pred(input0))
+    print("successors", sc.succ(input0))
 
-input0 = list(inputGates)[0]
-print(input0)
-print("predecessors", sc.pred(input0))
-print("successors", sc.succ(input0))
+    # going to have to use dp to avoid the recursion limit here
+    print(sc.depth_max())
+    print(sc.critical_nodes())
 
-# going to have to use dp to avoid the recursion limit here
-print(sc.depth_max())
-print(sc.critical_nodes())
+    print("----- Before rewrite operations -----")
 
-print("----- Before rewrite operations -----")
+    sc.print_node_info("\\alu_op_ext[0]")
+    sc.print_node_info("\\alu_op_ext[1]")
 
-sc.print_node_info("\\alu_op_ext[0]")
-sc.print_node_info("\\alu_op_ext[1]")
+    print("----- After rewrite operations -----")
 
-print("----- After rewrite operations -----")
+    sc.do_and_xor_transform()
 
-for nd in list(sc.c.nodes()):
-    sc.or_rewrite(nd)
+    sc.print_node_info("\\alu_op_ext[0]")
+    sc.print_node_info("\\alu_op_ext[1]")
 
-for nd in list(sc.c.nodes()):
-    sc.not_rewrite(nd)
+    print(set(c.type(c.nodes())))
 
-sc.print_node_info("\\alu_op_ext[0]")
-sc.print_node_info("\\alu_op_ext[1]")
+    cg.to_file(sc.c, "switch_rewrite.v", behavioral=True)
 
-print(set(c.type(c.nodes())))
-
-cg.to_file(sc.c, "ctrl_rewrite.v", behavioral=True)
-
-
-# sel_reg_dst[0]
-# alu_op_ext[0]
-# reg_write
-
-
-# cg.utils.visualize(c, "test.png", suppress_output=True)
-
-# we are getting different values because the reported numbers in the paper are after ABC optimization
+    # test code for visualizing the circuit
+    # cg.utils.visualize(c, "test.png", suppress_output=True)
