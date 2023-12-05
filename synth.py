@@ -212,23 +212,24 @@ class AndAssociative(RewriteRule):
 
 class AndMoveUp(RewriteRule):
     def is_rewrite_target(sc: SynthesisCircuit, p: list[str]):
-        return sc.count_AND_in_path(p) == 2 and sc.isAnd(p[0]) and sc.isAnd(p[-1])
+        return sc.count_AND_in_path(p) > 2 and sc.isAnd(p[0]) and sc.isAnd(p[-1])
 
+    # TODO: fix this
     def do_rewrite(sc: SynthesisCircuit, p: list[str]):
-        firstANDpred = sc.pred(p[0])
-        secondANDpred = sc.pred(p[1])
-        assert len(firstANDpred) == 2
-        assert len(secondANDpred) == 2 and p[0] in secondANDpred
+        firstXORpred = sc.pred(p[1])
+        lastANDpred = sc.pred(p[-1])
+        assert len(firstXORpred) == 2 and len(lastANDpred) == 2
+        xnode = list(filter(lambda x: x not in p, firstXORpred))[0]
+        yknode = list(filter(lambda x: x in p, lastANDpred))[0]
+        znode = list(filter(lambda x: x not in p, lastANDpred))[0]
 
         new_and_node = sc.c.uid("rewrite")
-        xnode = firstANDpred[0]
-        ynode = firstANDpred[1]
-        znode = list(filter(lambda x: x not in p, secondANDpred))[0]
+        sc.c.add(new_and_node, "and", fanin=[xnode, znode])
 
         # make new connections
         sc.c.disconnect(znode, p[1])
         sc.c.disconnect(p[0], p[1])
-        sc.c.add(new_and_node, "and", fanin=[ynode, znode])
+
         sc.c.connect(xnode, p[1])
         sc.c.connect(new_and_node, p[1])
 
@@ -244,9 +245,6 @@ def priority_c(sc: SynthesisCircuit, p: list[str]):
     crit_nd_set = set(sc.critical_nodes())
     total = set()
     for nd in p:
-        for n in sc.succ(nd):
-            if n in crit_nd_set:
-                total.add(n)
         for n in sc.pred(nd):
             if n in crit_nd_set:
                 total.add(n)
@@ -275,6 +273,7 @@ def run_minimization_heuristic(
             )
         )
         if len(filtered_cpath) == 0:
+            print("no paths left to rewrite")
             break
 
         filtered_cpath.sort(

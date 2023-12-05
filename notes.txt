@@ -63,20 +63,30 @@ def do_rewrite(p):
     pass
 
 
-def minimization_heuristic(c, prior_func):
-    # note that prior_func selects the path with highest priority
+def heuristic_based_optimization_loop(c, prior_func):
+    
+    # running counter
     cout = c
+
     while True:
+        # create copy
         coutp = cout
+
+        # 1. get critical paths
         pset = filter_paths(get_critical_paths(coutp))
         if len(pset) == 0:
             break
-        p = do_rewrite(prior_func(pset))
-        # have a Function to write this back to coutp
+
+        # 2. sort and select the path with highest priority
+        selected_path = prior_func(pset)
+
+        # 3. apply rewrite
+        do_rewrite(selected_path)
+
+        # 4. if depth is better, do an update
         if lmax(coutp) > lmax(cout):
             cout = coutp
 
-        # check termination condition and break
     return cout
 
 
