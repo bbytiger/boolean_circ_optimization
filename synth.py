@@ -2,20 +2,6 @@ from abc import ABC, abstractmethod
 import circuitgraph as cg
 
 
-class RewriteRule(ABC):
-    @abstractmethod
-    def find_rewrite_targets(self, c: cg.Circuit):
-        pass
-
-
-class AndAssociative(RewriteRule):
-    pass
-
-
-class AndMoveUp(RewriteRule):
-    pass
-
-
 class SynthesisCircuit(cg.Circuit):
     def __init__(self, circ: cg.Circuit):
         self.c = circ
@@ -164,6 +150,144 @@ class SynthesisCircuit(cg.Circuit):
         print(f"{nd} node_type", self.c.type(nd))
         print(f"{nd} succ", self.succ(nd))
         print(f"{nd} pred", self.pred(nd))
+
+    def copy(self):
+        return SynthesisCircuit(circ=self.c.copy())
+
+
+class RewriteRule(ABC):
+    @abstractmethod
+    def is_rewrite_target(sc: SynthesisCircuit, p: list[str]):
+        pass
+
+    @abstractmethod
+    def do_rewrite(sc: SynthesisCircuit, p: list[str]):
+        pass
+
+    @abstractmethod
+    def filter_condition(sc: SynthesisCircuit, p: list[str]):
+        pass
+
+
+class AndAssociative(RewriteRule):
+    def is_rewrite_target(sc: SynthesisCircuit, p: list[str]):
+        return len(p) == 2 and sc.isAnd(p[0]) and sc.isAnd(p[1])
+
+    def do_rewrite(sc: SynthesisCircuit, p: list[str]):
+        firstANDpred = sc.pred(p[0])
+        secondANDpred = sc.pred(p[1])
+        assert len(firstANDpred) == 2
+        assert len(secondANDpred) == 2 and p[0] in secondANDpred
+
+        new_and_node = sc.c.uid("rewrite")
+        xnode = firstANDpred[0]
+        ynode = firstANDpred[1]
+        znode = list(filter(lambda x: x not in p, secondANDpred))[0]
+
+        # make new connections
+        sc.c.disconnect(znode, p[1])
+        sc.c.disconnect(p[0], p[1])
+        sc.c.add(new_and_node, "and", fanin=[ynode, znode])
+        sc.c.connect(xnode, p[1])
+        sc.c.connect(new_and_node, p[1])
+
+    def filter_condition(sc: SynthesisCircuit, p: list[str]):
+        firstANDpred = sc.pred(p[0])
+        secondANDpred = sc.pred(p[1])
+        assert len(firstANDpred) == 2
+        assert len(secondANDpred) == 2 and p[0] in secondANDpred
+
+        xnode = firstANDpred[0]
+        ynode = firstANDpred[1]
+        znode = list(filter(lambda x: x not in p, secondANDpred))[0]
+
+        xdepth = sc.depth_l(xnode)
+        ydepth = sc.depth_l(ynode)
+        zdepth = sc.depth_l(znode)
+
+        print("xdepth", xdepth, "ydepth", ydepth, "zdepth", zdepth)
+
+        return ydepth < xdepth and zdepth < xdepth
+
+
+class AndMoveUp(RewriteRule):
+    def is_rewrite_target(sc: SynthesisCircuit, p: list[str]):
+        return sc.count_AND_in_path(p) == 2 and sc.isAnd(p[0]) and sc.isAnd(p[-1])
+
+    def do_rewrite(sc: SynthesisCircuit, p: list[str]):
+        firstANDpred = sc.pred(p[0])
+        secondANDpred = sc.pred(p[1])
+        assert len(firstANDpred) == 2
+        assert len(secondANDpred) == 2 and p[0] in secondANDpred
+
+        new_and_node = sc.c.uid("rewrite")
+        xnode = firstANDpred[0]
+        ynode = firstANDpred[1]
+        znode = list(filter(lambda x: x not in p, secondANDpred))[0]
+
+        # make new connections
+        sc.c.disconnect(znode, p[1])
+        sc.c.disconnect(p[0], p[1])
+        sc.c.add(new_and_node, "and", fanin=[ynode, znode])
+        sc.c.connect(xnode, p[1])
+        sc.c.connect(new_and_node, p[1])
+
+    def filter_condition(sc: SynthesisCircuit, p: list[str]):
+        l1v = sc.depth_l(p[0])
+        will_reduce_depth = True
+        for v in [p[0], p[-1]]:
+            will_reduce_depth &= min([sc.depth_l(u) for u in sc.pred(v)]) < l1v - 1
+        return will_reduce_depth
+
+
+def priority_c(sc: SynthesisCircuit, p: list[str]):
+    crit_nd_set = set(sc.critical_nodes())
+    total = set()
+    for nd in p:
+        for n in sc.succ(nd):
+            if n in crit_nd_set:
+                total.add(n)
+        for n in sc.pred(nd):
+            if n in crit_nd_set:
+                total.add(n)
+    return len(total)
+
+
+def run_minimization_heuristic(
+    sc: SynthesisCircuit,
+    rw: RewriteRule,
+    priority_func,
+    max_iter=100,
+):
+    # note that prior_func selects the path with highest priority
+    iter = 0
+    cout = sc.copy()
+    while iter < max_iter:
+        iter += 1
+        coutp = cout.copy()
+        critical_paths = sc.critical_paths()
+        filtered_cpath = list(
+            filter(
+                lambda p: (
+                    rw.is_rewrite_target(coutp, p) and rw.filter_condition(coutp, p)
+                ),
+                critical_paths,
+            )
+        )
+        if len(filtered_cpath) == 0:
+            break
+
+        filtered_cpath.sort(
+            reverse=True,
+            key=lambda p: priority_func(coutp, p),
+        )
+        rewrite_target_path = filtered_cpath[0]
+        rw.do_rewrite(coutp, rewrite_target_path)
+
+        # rewrite to tracker if output depth is lower
+        if cout.depth_max() > coutp.depth_max():
+            cout = coutp
+    return cout
 
 
 if __name__ == "__main__":

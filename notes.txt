@@ -1,0 +1,88 @@
+#### only used for scratchwork and notetaking during implementation ####
+
+
+# sources list
+# 1. A multi-start heuristic for multiplicative depth minimization of boolean circuits Sergiu Carpov, Pascal Aubry, Renaud Sirdey May 29, 2017
+
+
+def pred():
+    pass
+
+
+def succ():
+    pass
+
+
+def d(v):
+    # returns one for AND nodes and zero otherwise
+    pass
+
+
+def multiplicative_depth_l(v):
+    # will give the multiplicative depth l of a boolean circ
+    if len(pred(v)) == 0:
+        return 0
+    return argmax([multiplicative_depth_l(u) + d(v) for u in pred(v)])
+
+
+def multiplicative_depth_r(v):
+    # will give the reverse multiplicative depth l of a boolean circ
+    if len(succ(v)) == 0:
+        return 0
+    return argmax([multiplicative_depth_r(u) + d(u) for u in succ(v)])
+
+
+def lmax(V):
+    leftmax = max([multiplicative_depth_l(v) for v in V])
+    rightmax = max([multiplicative_depth_r(v) for v in V])
+    assert leftmax == rightmax
+    return leftmax
+
+
+def get_critical_paths(c):
+    pass
+
+
+def filter_paths(pathset):
+    pass
+
+
+# multiplicative depth of circuit is multiplicative depth of critical part
+
+""" example: consider P set of all critical paths beginning and ending in AND gate containing exactly 2 AND nodes """
+
+# keep a bank of rewrite rules
+# apply the rewrite rule each time we want to decrease the multiplicative depth
+# first one of interest is associativity: (x · y) · z = x · (y · z)
+# xor distributivity rule: (x ⊕ y) · z =  (x · z) ⊕ (y · z)
+
+# critical circuit can contain several parallel circuit paths
+
+
+def do_rewrite(p):
+    pass
+
+
+def minimization_heuristic(c, prior_func):
+    # note that prior_func selects the path with highest priority
+    cout = c
+    while True:
+        coutp = cout
+        pset = filter_paths(get_critical_paths(coutp))
+        if len(pset) == 0:
+            break
+        p = do_rewrite(prior_func(pset))
+        # have a Function to write this back to coutp
+        if lmax(coutp) > lmax(cout):
+            cout = coutp
+
+        # check termination condition and break
+    return cout
+
+
+# have multiple priority functions and even a random priority function
+# pick the one that yields the best results
+# how to actually define the "best": first weight be lowest multiplicative depth, then if ties, then pick lowest # of AND gates
+
+# We assume that each priority function performs well for a specific topology of boolean circuits.
+# (code for they don't know why each priority function performs well but religate it to the fact that each circuit is different)
