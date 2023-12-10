@@ -64,7 +64,6 @@ def do_rewrite(p):
 
 
 def heuristic_based_optimization_loop(c, prior_func):
-    
     # running counter
     cout = c
 
@@ -96,3 +95,6 @@ def heuristic_based_optimization_loop(c, prior_func):
 
 # We assume that each priority function performs well for a specific topology of boolean circuits.
 # (code for they don't know why each priority function performs well but religate it to the fact that each circuit is different)
+
+
+# use an E-graph to generate set of equivalent rewrite rules - suggestion from Nada

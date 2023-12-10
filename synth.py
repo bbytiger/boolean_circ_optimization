@@ -19,6 +19,12 @@ class SynthesisCircuit(cg.Circuit):
     def isAnd(self, nd):
         return self.c.type(nd) == "and"
 
+    def isXor(self, nd):
+        return self.c.type(nd) == "xor"
+
+    def setType(self, nd, t):
+        self.c.graph.nodes[nd]["type"] = t
+
     def depth_l(self, v):
         predessors = self.pred(v)
         if len(predessors) == 0:
@@ -37,6 +43,9 @@ class SynthesisCircuit(cg.Circuit):
         maxr = max([self.depth_r(v) for v in nodes])
         assert maxl == maxr
         return maxl
+
+    def count_AND(self):
+        return len(list(filter(lambda v: self.isAnd(v), self.c.nodes())))
 
     def critical_nodes(self):
         """
@@ -174,6 +183,7 @@ class AndAssociative(RewriteRule):
         return len(p) == 2 and sc.isAnd(p[0]) and sc.isAnd(p[1])
 
     def do_rewrite(sc: SynthesisCircuit, p: list[str]):
+        assert AndAssociative.is_rewrite_target(sc, p)
         firstANDpred = sc.pred(p[0])
         secondANDpred = sc.pred(p[1])
         assert len(firstANDpred) == 2
@@ -210,33 +220,45 @@ class AndAssociative(RewriteRule):
         return ydepth < xdepth and zdepth < xdepth
 
 
-class AndMoveUp(RewriteRule):
+class XorDistributive(RewriteRule):
     def is_rewrite_target(sc: SynthesisCircuit, p: list[str]):
-        return sc.count_AND_in_path(p) > 2 and sc.isAnd(p[0]) and sc.isAnd(p[-1])
+        return (
+            len(p) > 2
+            and sc.count_AND_in_path(p) == 2
+            and sc.isAnd(p[0])
+            and sc.isAnd(p[-1])
+        )
 
-    # TODO: fix this
     def do_rewrite(sc: SynthesisCircuit, p: list[str]):
-        firstXORpred = sc.pred(p[1])
-        lastANDpred = sc.pred(p[-1])
-        assert len(firstXORpred) == 2 and len(lastANDpred) == 2
-        xnode = list(filter(lambda x: x not in p, firstXORpred))[0]
-        yknode = list(filter(lambda x: x in p, lastANDpred))[0]
-        znode = list(filter(lambda x: x not in p, lastANDpred))[0]
+        assert XorDistributive.is_rewrite_target(sc, p)
+        XORpred = sc.pred(p[-2])
+        ANDpred = sc.pred(p[-1])
+        assert len(XORpred) == 2 and len(ANDpred) == 2
 
-        new_and_node = sc.c.uid("rewrite")
-        sc.c.add(new_and_node, "and", fanin=[xnode, znode])
+        xnode = XORpred[0]
+        ynode = XORpred[1]
+        assert p[-2] in ANDpred
+        znode = list(filter(lambda x: x != p[-2], ANDpred))[0]
 
-        # make new connections
-        sc.c.disconnect(znode, p[1])
-        sc.c.disconnect(p[0], p[1])
+        new_and_node_1 = sc.c.uid("rewrite")
+        sc.c.add(new_and_node_1, "and", fanin=[xnode, znode])
 
-        sc.c.connect(xnode, p[1])
-        sc.c.connect(new_and_node, p[1])
+        new_and_node_2 = sc.c.uid("rewrite")
+        sc.c.add(new_and_node_2, "and", fanin=[ynode, znode])
+
+        # rearrange circuit connections
+        sc.c.disconnect(p[-2], p[-1])
+        sc.c.disconnect(znode, p[-1])
+        assert len(sc.pred(p[-1])) == 0
+
+        sc.setType(p[-1], "xor")
+        sc.c.connect(new_and_node_1, p[-1])
+        sc.c.connect(new_and_node_2, p[-1])
 
     def filter_condition(sc: SynthesisCircuit, p: list[str]):
-        l1v = sc.depth_l(p[0])
+        l1v = sc.depth_l(p[-2])
         will_reduce_depth = True
-        for v in [p[0], p[-1]]:
+        for v in [p[-2], p[-1]]:
             will_reduce_depth &= min([sc.depth_l(u) for u in sc.pred(v)]) < l1v - 1
         return will_reduce_depth
 
@@ -253,39 +275,46 @@ def priority_c(sc: SynthesisCircuit, p: list[str]):
 
 def run_minimization_heuristic(
     sc: SynthesisCircuit,
-    rw: RewriteRule,
+    rw_list: list[RewriteRule],
     priority_func,
     max_iter=100,
 ):
-    # note that prior_func selects the path with highest priority
     iter = 0
     cout = sc.copy()
     while iter < max_iter:
         iter += 1
-        coutp = cout.copy()
-        critical_paths = sc.critical_paths()
-        filtered_cpath = list(
-            filter(
-                lambda p: (
-                    rw.is_rewrite_target(coutp, p) and rw.filter_condition(coutp, p)
-                ),
-                critical_paths,
+        continue_cnt = 0
+        for rw in rw_list:
+            coutp = cout.copy()
+            critical_paths = coutp.critical_paths()
+            filtered_cpath = list(
+                filter(
+                    lambda p: (
+                        rw.is_rewrite_target(coutp, p) and rw.filter_condition(coutp, p)
+                    ),
+                    critical_paths,
+                )
             )
-        )
-        if len(filtered_cpath) == 0:
-            print("no paths left to rewrite")
+            if len(filtered_cpath) == 0:
+                print("no paths left to rewrite for rule ", rw)
+                continue_cnt += 1
+                continue
+
+            filtered_cpath.sort(
+                reverse=True,
+                key=lambda p: priority_func(coutp, p),
+            )
+            rewrite_target_path = filtered_cpath[0]
+            rw.do_rewrite(coutp, rewrite_target_path)
+
+            # rewrite to tracker if output depth is lower
+            if cout.depth_max() > coutp.depth_max():
+                cout = coutp
+
+        if continue_cnt == len(rw_list):
+            print("no paths left to rewrite for all rules")
             break
 
-        filtered_cpath.sort(
-            reverse=True,
-            key=lambda p: priority_func(coutp, p),
-        )
-        rewrite_target_path = filtered_cpath[0]
-        rw.do_rewrite(coutp, rewrite_target_path)
-
-        # rewrite to tracker if output depth is lower
-        if cout.depth_max() > coutp.depth_max():
-            cout = coutp
     return cout
 
 
