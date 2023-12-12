@@ -5,6 +5,8 @@ import circuitgraph as cg
 class SynthesisCircuit(cg.Circuit):
     def __init__(self, circ: cg.Circuit):
         self.c = circ
+        self.l_cache = {}
+        self.r_cache = {}
 
     def pred(self, nd):
         if self.c.graph.has_node(nd):
@@ -26,16 +28,26 @@ class SynthesisCircuit(cg.Circuit):
         self.c.graph.nodes[nd]["type"] = t
 
     def depth_l(self, v):
+        if v in self.l_cache:
+            return self.l_cache[v]
         predessors = self.pred(v)
         if len(predessors) == 0:
+            self.l_cache[v] = 0
             return 0
-        return max([self.depth_l(u) for u in predessors]) + self.isAnd(v)
+        depth_l_val = max([self.depth_l(u) for u in predessors]) + self.isAnd(v)
+        self.l_cache[v] = depth_l_val
+        return depth_l_val
 
     def depth_r(self, v):
+        if v in self.r_cache:
+            return self.r_cache[v]
         successors = self.succ(v)
         if len(successors) == 0:
+            self.r_cache[v] = 0
             return 0
-        return max([self.depth_r(u) + self.isAnd(u) for u in successors])
+        depth_r_val = max([self.depth_r(u) + self.isAnd(u) for u in successors])
+        self.r_cache[v] = depth_r_val
+        return depth_r_val
 
     def depth_max(self):
         nodes = self.c.nodes()
@@ -43,6 +55,10 @@ class SynthesisCircuit(cg.Circuit):
         maxr = max([self.depth_r(v) for v in nodes])
         assert maxl == maxr
         return maxl
+
+    def flush_cache(self):
+        self.l_cache = {}
+        self.r_cache = {}
 
     def count_AND(self):
         return len(list(filter(lambda v: self.isAnd(v), self.c.nodes())))
@@ -109,6 +125,8 @@ class SynthesisCircuit(cg.Circuit):
     def or_rewrite(self, nd):
         """a OR b = (a XOR b) XOR (a AND b)"""
         if self.c.type(nd) == "or":  # noqa: E721
+            self.flush_cache()
+
             # extract predecessors and successors
             predecessors = self.pred(nd)
             successors = self.succ(nd)
@@ -132,6 +150,8 @@ class SynthesisCircuit(cg.Circuit):
     def not_rewrite(self, nd):
         """NOT a = 1 XOR a"""
         if self.c.type(nd) == "not":  # noqa: E721
+            self.flush_cache()
+
             # extract predecessors and successors
             predecessors = self.pred(nd)
             successors = self.succ(nd)
@@ -187,6 +207,8 @@ class AndAssociative(RewriteRule):
         return len(p) == 2 and sc.isAnd(p[0]) and sc.isAnd(p[1])
 
     def do_rewrite(sc: SynthesisCircuit, p: list[str]):
+        sc.flush_cache()
+
         assert AndAssociative.is_rewrite_target(sc, p)
         firstANDpred = sc.pred(p[0])
         secondANDpred = sc.pred(p[1])
@@ -234,6 +256,8 @@ class XorDistributive(RewriteRule):
         )
 
     def do_rewrite(sc: SynthesisCircuit, p: list[str]):
+        sc.flush_cache()
+
         assert XorDistributive.is_rewrite_target(sc, p)
         XORpred = sc.pred(p[-2])
         ANDpred = sc.pred(p[-1])

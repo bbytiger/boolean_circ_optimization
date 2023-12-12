@@ -26,8 +26,7 @@ outc = run_minimization_heuristic(
     [XorDistributive, AndAssociative],
     priority_c,
 )
-print("depth_max", sc.depth_max())
-print(set(sc.c.type(c.nodes())))
-print("# of ANDs", sc.count_AND())
-print("size of circuit", len(sc.c.nodes()))
+print("depth_max", outc.depth_max())
+print("# of ANDs", outc.count_AND())
+print("size of circuit", len(outc.c.nodes()))
 cg.to_file(outc.c, "router_rewrite.v", behavioral=True)
