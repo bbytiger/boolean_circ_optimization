@@ -47,6 +47,10 @@ class SynthesisCircuit(cg.Circuit):
     def count_AND(self):
         return len(list(filter(lambda v: self.isAnd(v), self.c.nodes())))
 
+    def is_critical_node(self, nd):
+        maxd = self.depth_max()
+        return self.depth_l(nd) + self.depth_r(nd) == maxd
+
     def critical_nodes(self):
         """
         Generate a list of critical nodes in the given circuit
@@ -264,11 +268,10 @@ class XorDistributive(RewriteRule):
 
 
 def priority_c(sc: SynthesisCircuit, p: list[str]):
-    crit_nd_set = set(sc.critical_nodes())
     total = set()
     for nd in p:
         for n in sc.pred(nd):
-            if n in crit_nd_set:
+            if sc.is_critical_node(nd):
                 total.add(n)
     return len(total)
 
@@ -323,6 +326,9 @@ def run_minimization_heuristic(
 
         print("depth changed from", cout.depth_max(), "to", coutp.depth_max())
         cout = coutp
+        print("depth_max", cout.depth_max())
+        print("# of ANDs", cout.count_AND())
+        print("size of circuit", len(cout.c.nodes()))
 
     return cout
 
