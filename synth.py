@@ -17,10 +17,10 @@ class SynthesisCircuit(cg.Circuit):
         raise KeyError(f"Node {nd} not found.")
 
     def isAnd(self, nd):
-        return self.c.type(nd) == "and"
+        return self.c.type(nd) == "and"  # noqa: E721
 
     def isXor(self, nd):
-        return self.c.type(nd) == "xor"
+        return self.c.type(nd) == "xor"  # noqa: E721
 
     def setType(self, nd, t):
         self.c.graph.nodes[nd]["type"] = t
@@ -104,7 +104,7 @@ class SynthesisCircuit(cg.Circuit):
 
     def or_rewrite(self, nd):
         """a OR b = (a XOR b) XOR (a AND b)"""
-        if self.c.type(nd) == "or":
+        if self.c.type(nd) == "or":  # noqa: E721
             # extract predecessors and successors
             predecessors = self.pred(nd)
             successors = self.succ(nd)
@@ -127,7 +127,7 @@ class SynthesisCircuit(cg.Circuit):
 
     def not_rewrite(self, nd):
         """NOT a = 1 XOR a"""
-        if self.c.type(nd) == "not":
+        if self.c.type(nd) == "not":  # noqa: E721
             # extract predecessors and successors
             predecessors = self.pred(nd)
             successors = self.succ(nd)
@@ -279,41 +279,50 @@ def run_minimization_heuristic(
     priority_func,
     max_iter=100,
 ):
+    # helper function
+    def do_filter(c: SynthesisCircuit, rw: RewriteRule):
+        return list(
+            filter(
+                lambda p: (rw.is_rewrite_target(c, p) and rw.filter_condition(c, p)),
+                c.critical_paths(),
+            )
+        )
+
+    # actual training loop
     iter = 0
     cout = sc.copy()
     while iter < max_iter:
         iter += 1
         continue_cnt = 0
+        coutp = cout.copy()
         for rw in rw_list:
-            coutp = cout.copy()
-            critical_paths = coutp.critical_paths()
-            filtered_cpath = list(
-                filter(
-                    lambda p: (
-                        rw.is_rewrite_target(coutp, p) and rw.filter_condition(coutp, p)
-                    ),
-                    critical_paths,
-                )
-            )
+            filtered_cpath = do_filter(coutp, rw)
             if len(filtered_cpath) == 0:
-                print("no paths left to rewrite for rule ", rw)
+                print("no paths to rewrite for rule ", rw)
                 continue_cnt += 1
                 continue
 
-            filtered_cpath.sort(
-                reverse=True,
-                key=lambda p: priority_func(coutp, p),
-            )
-            rewrite_target_path = filtered_cpath[0]
-            rw.do_rewrite(coutp, rewrite_target_path)
+            while len(filtered_cpath) > 0:
+                filtered_cpath.sort(
+                    reverse=True,
+                    key=lambda p: priority_func(coutp, p),
+                )
+                rewrite_target_path = filtered_cpath[0]
+                rw.do_rewrite(coutp, rewrite_target_path)
+                filtered_cpath = do_filter(coutp, rw)
 
-            # rewrite to tracker if output depth is lower
-            if cout.depth_max() > coutp.depth_max():
-                cout = coutp
+        # rewrite to tracker if output depth is lower
+        if cout.depth_max() < coutp.depth_max():
+            print("depth changed from", cout.depth_max(), "to", coutp.depth_max())
+            break
 
+        # break if no paths found at all
         if continue_cnt == len(rw_list):
             print("no paths left to rewrite for all rules")
             break
+
+        print("depth changed from", cout.depth_max(), "to", coutp.depth_max())
+        cout = coutp
 
     return cout
 
